@@ -30,45 +30,74 @@ def parse_reg_map_file(filepath):
     current_reg_offset = None
 
     with open(filepath, 'r') as f:
-        for line in f:
-            line = line.rstrip()
+        for line_num, raw_line in enumerate(f, 1):
+            line = raw_line.strip()
             if not line:
                 continue
 
             parts = line.split()
-            is_indented = line.startswith(' ')
+            
+            # 두 번째 요소가 '0x'로 시작하면 주소로 간주하여 새 레지스터 라인으로 처리
+            is_new_register = len(parts) > 1 and parts[1].startswith('0x')
 
-            if not is_indented:
-                # 이전 레지스터 정보 저장
-                if current_reg_name and current_fields:
-                    reset_value = calculate_reset_value(current_fields)
-                    registers.append(Register(current_reg_name, current_reg_offset, reset_value))
-                
-                # 새 레지스터 시작
-                current_fields = []
-                reg_name, address_str, field_name, _, position, reset_str = parts
-                
-                address = int(address_str, 16)
-                if base_address is None:
-                    base_address = address & 0xFFFFF000 # e.g., 0x40007000
-                
-                current_reg_name = reg_name.upper()
-                current_reg_offset = address - base_address
-                
-                reset_value = int(reset_str, 16)
-                current_fields.append(Field(field_name, position, reset_value))
+            try:
+                if is_new_register:
+                    # 이전 레지스터 정보가 있다면 저장
+                    if current_reg_name and current_fields:
+                        reset_value = calculate_reset_value(current_fields)
+                        registers.append(Register(current_reg_name, current_reg_offset, reset_value))
+                    
+                    # 새 레지스터 파싱 시작
+                    current_fields = []
+                    
+                    # 포맷: reg_name address field_name [permission] position reset_val
+                    if len(parts) < 5:
+                        print(f"Warning: L{line_num}: Skipping malformed register line. Not enough parts. ('{line}')")
+                        current_reg_name = None
+                        continue
 
-            else: # 들여쓰기 된 라인 (추가 필드)
-                field_name, _, position, reset_str = parts
-                reset_value = int(reset_str, 16)
-                current_fields.append(Field(field_name, position, reset_value))
+                    reg_name, address_str, field_name, *rest = parts
+                    position = rest[-2]
+                    reset_str = rest[-1]
 
-    # 마지막 레지스터 정보 저장
+                    address = int(address_str, 16)
+                    if base_address is None:
+                        base_address = address & 0xFFFFF000 # e.g., 0x40007000
+                    
+                    current_reg_name = reg_name.upper()
+                    current_reg_offset = address - base_address
+                    
+                    reset_value = int(reset_str, 16)
+                    current_fields.append(Field(field_name, position, reset_value))
+
+                else: # 필드 라인으로 처리
+                    if not current_reg_name:
+                        print(f"Warning: L{line_num}: Skipping field line with no active register ('{line}')")
+                        continue
+                    
+                    # 포맷: field_name [permission] position reset_val
+                    if len(parts) < 3:
+                        print(f"Warning: L{line_num}: Skipping malformed field line. Not enough parts. ('{line}')")
+                        continue
+
+                    field_name, *rest = parts
+                    position = rest[-2]
+                    reset_str = rest[-1]
+                        
+                    reset_value = int(reset_str, 16)
+                    current_fields.append(Field(field_name, position, reset_value))
+
+            except (ValueError, IndexError) as e:
+                print(f"Warning: L{line_num}: Could not parse line '{line}'. Error: {e}")
+                continue
+
+    # 파일 끝에 도달했을 때 마지막 레지스터 정보 저장
     if current_reg_name and current_fields:
         reset_value = calculate_reset_value(current_fields)
         registers.append(Register(current_reg_name, current_reg_offset, reset_value))
 
     return registers, base_address
+
 
 def generate_cpp_code(registers, base_address, class_name):
     "파싱된 레지스터 정보로 C++ 코드를 생성합니다."
