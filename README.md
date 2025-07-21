@@ -85,3 +85,52 @@ void ExampleMap::reset(bool active) {
   }
 }
 ```
+
+## Golden Header Generator
+
+This Python script generates a C++ header file containing golden values for register reset states. It parses the same register map file and creates a `std::vector` of `RegInfo` structs, each holding a register's offset and its expected reset value. This is useful for verification and testing purposes.
+
+### Usage
+
+Run the script from your terminal, providing the path to the input register map file.
+
+```bash
+python golden_h_generator.py <input_file.txt>
+```
+
+The script will create a C++ header file named in snake_case based on the input file name (e.g., `MyModule.txt` -> `my_module_golden.h`).
+
+### Example
+
+#### 1. Input File (`example_map.txt`)
+
+Using the same `example_map.txt` as before.
+
+#### 2. Running the Generator
+
+```bash
+python golden_h_generator.py example_map.txt
+```
+
+#### 3. Output File (`example_map_golden.h`)
+
+The script will generate the following C++ header file:
+
+```cpp
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+struct RegInfo {
+  uint32_t offset;
+  uint16_t expected_value;
+};
+
+std::vector<RegInfo> golden_regs = {
+  {0x0002, 0x0051}, // SYS_CTRL_1
+  {0x0004, 0xffff}, // SYS_CTRL_2
+  {0x0006, 0x0000}, // DEV_STATUS
+  {0x00a4, 0x01a2}, // DEV_ID
+};
+```
