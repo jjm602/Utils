@@ -1,0 +1,2 @@
+# Ignore generated golden header files
+*_golden.h
