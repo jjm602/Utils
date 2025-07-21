@@ -1,39 +1,97 @@
 import sys
 import os
 import re
+from collections import namedtuple
 
-def parse_reg_map_for_golden(filepath):
-    """
-    Parses the register map file to extract registers with their address and reset value,
-    focusing on lines that define a new register.
-    """
+# From cpp_generator.py
+Field = namedtuple('Field', ['name', 'position', 'reset_value'])
+Register = namedtuple('Register', ['name', 'offset', 'reset_value'])
+
+def parse_bit_position(pos_str):
+    "'[15:0]' 형식의 문자열에서 시작 비트(0)를 파싱합니다."
+    match = re.search(r'\[(\d+):(\d+)\]', pos_str)
+    if match:
+        return int(match.group(2)) # Return the lower bit number
+    match = re.search(r'\[(\d+)\]', pos_str)
+    if match:
+        return int(match.group(1))
+    return 0
+
+def calculate_reset_value(fields):
+    "필드 목록에서 전체 레지스터의 리셋 값을 계산합니다."
+    total_reset = 0
+    for field in fields:
+        start_bit = parse_bit_position(field.position)
+        total_reset |= (field.reset_value << start_bit)
+    return total_reset
+
+def parse_reg_map_file(filepath):
+    "레지스터 맵 파일을 파싱하여 레지스터 정보 리스트를 반환합니다."
     registers = []
     base_address = None
+    current_fields = []
+    current_reg_name = None
+    current_reg_offset = None
+    current_reg_raw_name = None
 
     with open(filepath, 'r') as f:
-        for line in f:
-            line = line.strip()
+        for line_num, raw_line in enumerate(f, 1):
+            line = raw_line.strip()
             if not line:
                 continue
 
             parts = line.split()
-            # A line is considered a new register definition if the second part is a hex address.
-            if len(parts) > 1 and parts[1].startswith('0x'):
-                try:
-                    reg_name = parts[0]
-                    address = int(parts[1], 16)
-                    reset_value_str = parts[-1]
-                    reset_value = int(reset_value_str, 16)
+            
+            is_new_register = len(parts) > 1 and parts[1].startswith('0x')
 
+            try:
+                if is_new_register:
+                    if current_reg_name and current_fields:
+                        reset_value = calculate_reset_value(current_fields)
+                        registers.append(Register(current_reg_raw_name, current_reg_offset, reset_value))
+                    
+                    current_fields = []
+                    
+                    if len(parts) < 5:
+                        current_reg_name = None
+                        continue
+
+                    reg_name, address_str, field_name, *rest = parts
+                    position = rest[-2]
+                    reset_str = rest[-1]
+
+                    address = int(address_str, 16)
                     if base_address is None:
-                        # Assuming the first address sets the base
-                        base_address = address & 0xFFFFF000  # e.g., 0x40007000
+                        base_address = address & 0xFFFFF000
+                    
+                    current_reg_raw_name = reg_name
+                    current_reg_name = reg_name.upper()
+                    current_reg_offset = address - base_address
+                    
+                    reset_value = int(reset_str, 16)
+                    current_fields.append(Field(field_name, position, reset_value))
 
-                    offset = address - base_address
-                    registers.append({'name': reg_name, 'offset': offset, 'reset': reset_value})
-                except (ValueError, IndexError) as e:
-                    print(f"Warning: Could not parse register line: '{line}'. Error: {e}")
-    
+                else: 
+                    if not current_reg_name:
+                        continue
+                    
+                    if len(parts) < 3:
+                        continue
+
+                    field_name, *rest = parts
+                    position = rest[-2]
+                    reset_str = rest[-1]
+                        
+                    reset_value = int(reset_str, 16)
+                    current_fields.append(Field(field_name, position, reset_value))
+
+            except (ValueError, IndexError) as e:
+                continue
+
+    if current_reg_name and current_fields:
+        reset_value = calculate_reset_value(current_fields)
+        registers.append(Register(current_reg_raw_name, current_reg_offset, reset_value))
+
     return registers
 
 def generate_golden_h_code(registers):
@@ -57,11 +115,22 @@ std::vector<RegInfo> golden_regs = {
 """
     
     for reg in registers:
-        header_content += f"  {{0x{reg['offset']:04x}, 0x{reg['reset']:04x}}}, // {reg['name']}\n"
+        header_content += f"  {{0x{reg.offset:04x}, 0x{reg.reset_value:04x}}}, // {reg.name}\n"
 
     header_content += "};\n"
     
     return header_content
+
+def camel_to_snake(name):
+    """Converts a CamelCase string to snake_case."""
+    if not name:
+        return ''
+    result = [name[0].lower()]
+    for char in name[1:]:
+        if char.isupper():
+            result.append('_')
+        result.append(char.lower())
+    return "".join(result)
 
 def main():
     """Main execution function"""
@@ -74,14 +143,12 @@ def main():
         print(f"Error: File not found at {input_filepath}")
         sys.exit(1)
 
-    # Generate output filename from input filename
     base_name = os.path.splitext(os.path.basename(input_filepath))[0]
-    # Convert CamelCase to snake_case and append _golden.h
-    snake_case_name = re.sub(r'(?<!^)(?=[A-Z])', '_', base_name).lower()
+    snake_case_name = camel_to_snake(base_name)
     output_filename = f"{snake_case_name}_golden.h"
 
     try:
-        registers = parse_reg_map_for_golden(input_filepath)
+        registers = parse_reg_map_file(input_filepath)
         h_code = generate_golden_h_code(registers)
         
         with open(output_filename, 'w') as f:

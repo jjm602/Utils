@@ -136,6 +136,17 @@ def generate_cpp_code(registers, base_address, class_name):
 
     return cpp
 
+def camel_to_snake(name):
+    """Converts a CamelCase string to snake_case."""
+    if not name:
+        return ''
+    result = [name[0].lower()]
+    for char in name[1:]:
+        if char.isupper():
+            result.append('_')
+        result.append(char.lower())
+    return "".join(result)
+
 def main():
     """메인 실행 함수"""
     if len(sys.argv) != 2:
@@ -151,7 +162,7 @@ def main():
     base_name = os.path.splitext(os.path.basename(input_filepath))[0]
     class_name = base_name
     # Convert CamelCase class name to snake_case for the filename
-    snake_case_name = re.sub(r'(?<!^)(?=[A-Z])', '_', base_name).lower()
+    snake_case_name = camel_to_snake(base_name)
     output_filename = snake_case_name + ".cpp"
 
     try:
